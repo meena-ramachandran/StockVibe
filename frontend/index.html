@@ -1,0 +1,189 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Stock Dashboard (Finnhub + yfinance)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding:20px; max-width:1000px; margin:auto; }
+    input, button { padding:8px; font-size:14px; }
+    .card { border:1px solid #ddd; padding:12px; border-radius:8px; margin-top:12px; }
+    #suggestions { border:1px solid #ccc; padding:8px; max-height:160px; overflow:auto; display:none; position:absolute; background:white; width:320px; }
+    .suggestion { padding:6px; cursor:pointer; }
+    .suggestion:hover { background:#f0f0f0; }
+    #stats { display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; }
+    .stat { background:#fafafa; padding:8px; border-radius:6px; min-width:140px; text-align:left; }
+  </style>
+</head>
+<body>
+  <h2>Realtime Stock Analytics (Search + MA + Live price)</h2>
+
+  <div>
+    <input id="searchBox" placeholder="Search company or symbol (e.g. Apple, AAPL)" style="width:320px" />
+    <button onclick="doSearch()">Search</button>
+    <div id="suggestions"></div>
+  </div>
+
+
+  <div class="card">
+    <strong id="selectedTitle">No symbol selected</strong>
+    <div id="stats"></div>
+    <canvas id="chart" width="900" height="300"></canvas>
+  </div>
+
+  <div class="card" id="newsSentimentCard" style="display:none">
+    <strong>News Sentiment</strong>
+    <div id="newsSentimentResult" style="margin-top:8px;font-size:16px"></div>
+  </div>
+
+  <script>
+    const API_BASE = "http://127.0.0.1:8000";
+    let ws;
+    let currentSymbol = null;
+    let chart;
+
+    async function doSearch() {
+      const q = document.getElementById("searchBox").value.trim();
+      if (!q) return alert("Type a company name or symbol to search.");
+      const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      showSuggestions(data.results || []);
+    }
+
+    function showSuggestions(list) {
+      const box = document.getElementById("suggestions");
+      box.innerHTML = "";
+      if (!list || list.length === 0) {
+        box.style.display = "none";
+        return;
+      }
+      list.forEach(item => {
+        const el = document.createElement("div");
+        el.className = "suggestion";
+        el.innerText = `${item.symbol} — ${item.description || ""} (${item.type || item.currency || ""})`;
+        el.onclick = () => {
+          box.style.display = "none";
+          selectSymbol(item.symbol, item.description);
+        };
+        box.appendChild(el);
+      });
+      box.style.display = "block";
+    }
+
+    async function selectSymbol(symbol, desc) {
+      currentSymbol = symbol;
+      document.getElementById("selectedTitle").innerText = `${symbol} — ${desc || ""}`;
+      // fetch analytics
+      const a = await fetch(`${API_BASE}/analytics/${encodeURIComponent(symbol)}?period_days=90`);
+      const j = await a.json();
+      if (j.error) {
+        alert("Analytics error: " + j.error);
+        return;
+      }
+      renderStats(j);
+      renderChart(j.history.labels, j.history.prices, symbol);
+      openWebSocketAndSubscribe(symbol);
+
+      // fetch news sentiment
+      fetchNewsSentiment(symbol);
+    }
+    async function fetchNewsSentiment(symbol) {
+      const card = document.getElementById("newsSentimentCard");
+      const resultDiv = document.getElementById("newsSentimentResult");
+      card.style.display = "block";
+      resultDiv.innerHTML = "<em>Loading news sentiment...</em>";
+      try {
+        const res = await fetch(`${API_BASE}/news-sentiment/${encodeURIComponent(symbol)}`);
+        const data = await res.json();
+        if (data.error) {
+          resultDiv.innerHTML = `<span style='color:#b00'>Error: ${data.error}</span>`;
+          return;
+        }
+        let color = data.summary === "positive" ? "#090" : data.summary === "negative" ? "#b00" : "#888";
+        resultDiv.innerHTML = `
+          <b>Summary:</b> <span style='color:${color}'>${data.summary}</span><br/>
+          <b>Average Sentiment Score:</b> ${data.average_sentiment.toFixed(3)}<br/>
+          <b>Headlines analyzed:</b> ${data.count}<br/>
+          <b>Most Positive:</b> <span style='color:#090'>${data.most_positive || "—"}</span><br/>
+          <b>Most Negative:</b> <span style='color:#b00'>${data.most_negative || "—"}</span>
+        `;
+      } catch (e) {
+        resultDiv.innerHTML = `<span style='color:#b00'>Error fetching news sentiment.</span>`;
+      }
+    }
+
+    function renderStats(obj) {
+      const div = document.getElementById("stats");
+      div.innerHTML = "";
+      const make = (k, v) => `<div class="stat"><div style="font-size:12px;color:#666">${k}</div><div style="font-size:18px">${v}</div></div>`;
+      div.innerHTML += make("Last price", obj.last_price ?? "—");
+      div.innerHTML += make("5-day MA", obj.ma_short ?? "—");
+      div.innerHTML += make("20-day MA", obj.ma_long ?? "—");
+      div.innerHTML += make("Volatility (annual)", obj.volatility_annualized ?? "—");
+      div.innerHTML += make("% change (period)", (obj.percent_change_period ?? "—") + "%");
+    }
+
+    function renderChart(labels, prices, symbol) {
+      const ctx = document.getElementById("chart").getContext("2d");
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [
+            { label: symbol, data: prices, fill: false, tension: 0.1 }
+          ]
+        },
+        options: { animation: false, responsive: true }
+      });
+    }
+
+    function openWebSocketAndSubscribe(symbol) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ action: "subscribe", symbol }));
+        return;
+      }
+      ws = new WebSocket("ws://127.0.0.1:8000/ws");
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ action: "subscribe", symbol }));
+      };
+      ws.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data);
+          if (msg.type === "price" && msg.symbol === currentSymbol) {
+            // push to chart & show price
+            const price = msg.price;
+            const ts = new Date(msg.ts * 1000).toLocaleTimeString();
+            // append to chart (keep max ~120 points)
+            if (chart) {
+              chart.data.labels.push(ts);
+              chart.data.datasets[0].data.push(price);
+              if (chart.data.labels.length > 120) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+              }
+              chart.update();
+            }
+            // also update last price stat
+            const stats = document.getElementById("stats");
+            if (stats) {
+              // replace first stat (Last price)
+              const firstStat = stats.children[0];
+              if (firstStat) {
+                firstStat.innerHTML = `<div style="font-size:12px;color:#666">Last price</div><div style="font-size:18px">${price}</div>`;
+              }
+            }
+          }
+        } catch (e) { console.error(e); }
+      };
+      ws.onclose = () => console.log("ws closed");
+      ws.onerror = (e) => console.error("ws error", e);
+    }
+
+    // small helper: pressing Enter triggers search
+    document.getElementById("searchBox").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doSearch();
+    });
+  </script>
+</body>
+</html>
