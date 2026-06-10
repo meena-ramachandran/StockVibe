@@ -4,7 +4,8 @@ services:
     name: stockvibe-backend
     env: docker
     plan: free
-    dockerfilePath: backend/Dockerfile
+    rootDir: backend
+    dockerfilePath: Dockerfile
     envVars:
       - key: NEWSAPI_KEY
         sync: false
