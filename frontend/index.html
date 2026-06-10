@@ -16,7 +16,7 @@
   </style>
 </head>
 <body>
-  <h2>Realtime Stock Analytics (Search + MA + Live price)</h2>
+  <h2>Realtime Stock Analytics (Search + MA + Live price) <span id="wsStatus" style="font-size: 13px; font-weight: normal; color: #888; margin-left: 10px; border: 1px solid #ddd; padding: 3px 8px; border-radius: 12px; vertical-align: middle; display: inline-block;">● Offline</span></h2>
 
   <div>
     <input id="searchBox" placeholder="Search company or symbol (e.g. Apple, AAPL)" style="width:320px" />
@@ -37,7 +37,8 @@
   </div>
 
   <script>
-    const API_BASE = "http://127.0.0.1:8000";
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const API_BASE = isLocal ? "http://127.0.0.1:8000" : "https://stockvibe-backend.onrender.com";
     let ws;
     let currentSymbol = null;
     let chart;
@@ -139,12 +140,31 @@
     }
 
     function openWebSocketAndSubscribe(symbol) {
+      const statusEl = document.getElementById("wsStatus");
       if (ws && ws.readyState === WebSocket.OPEN) {
+        if (statusEl) {
+          statusEl.innerText = "● Live";
+          statusEl.style.color = "#16a34a";
+          statusEl.style.borderColor = "#bbf7d0";
+        }
         ws.send(JSON.stringify({ action: "subscribe", symbol }));
         return;
       }
-      ws = new WebSocket("ws://127.0.0.1:8000/ws");
+      
+      if (statusEl) {
+        statusEl.innerText = "● Connecting...";
+        statusEl.style.color = "#d97706";
+        statusEl.style.borderColor = "#fcd34d";
+      }
+
+      const wsUrl = isLocal ? "ws://127.0.0.1:8000/ws" : "wss://stockvibe-backend.onrender.com/ws";
+      ws = new WebSocket(wsUrl);
       ws.onopen = () => {
+        if (statusEl) {
+          statusEl.innerText = "● Live";
+          statusEl.style.color = "#16a34a";
+          statusEl.style.borderColor = "#bbf7d0";
+        }
         ws.send(JSON.stringify({ action: "subscribe", symbol }));
       };
       ws.onmessage = (evt) => {
@@ -153,6 +173,7 @@
           if (msg.type === "price" && msg.symbol === currentSymbol) {
             // push to chart & show price
             const price = msg.price;
+            if (price === null || price === undefined) return;
             const ts = new Date(msg.ts * 1000).toLocaleTimeString();
             // append to chart (keep max ~120 points)
             if (chart) {
@@ -176,8 +197,22 @@
           }
         } catch (e) { console.error(e); }
       };
-      ws.onclose = () => console.log("ws closed");
-      ws.onerror = (e) => console.error("ws error", e);
+      ws.onclose = () => {
+        console.log("ws closed");
+        if (statusEl) {
+          statusEl.innerText = "● Disconnected";
+          statusEl.style.color = "#dc2626";
+          statusEl.style.borderColor = "#fecaca";
+        }
+      };
+      ws.onerror = (e) => {
+        console.error("ws error", e);
+        if (statusEl) {
+          statusEl.innerText = "● Error";
+          statusEl.style.color = "#dc2626";
+          statusEl.style.borderColor = "#fecaca";
+        }
+      };
     }
 
     // small helper: pressing Enter triggers search

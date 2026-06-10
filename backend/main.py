@@ -61,48 +61,58 @@ async def get_news_sentiment(symbol: str, limit: int = 10):
     Uses NewsAPI (or similar) and TextBlob for sentiment analysis.
     """
     NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
+    headlines = []
+    
     if not NEWSAPI_KEY:
-        return {"error": "NEWSAPI_KEY not set. Get one at https://newsapi.org/ and set NEWSAPI_KEY env var."}
-    url = f"https://newsapi.org/v2/everything?q={symbol}&sortBy=publishedAt&language=en&pageSize={limit}&apiKey={NEWSAPI_KEY}"
+        # Mock fallback news articles for sentiment analysis
+        headlines = [
+            f"{symbol} shares surge as analysts upgrade rating following quarterly review.",
+            f"Regulatory scrutiny intensifies for {symbol} competitors in international markets.",
+            f"Industry reports suggest stable product demand for {symbol} services this quarter.",
+            f"{symbol} announces strategic integration of machine learning tooling across suites."
+        ]
+    else:
+        url = f"https://newsapi.org/v2/everything?q={symbol}&sortBy=publishedAt&language=en&pageSize={limit}&apiKey={NEWSAPI_KEY}"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(url)
+                if r.status_code == 200:
+                    data = r.json()
+                    articles = data.get("articles", [])
+                    headlines = [a["title"] for a in articles if a.get("title")]
+                else:
+                    return {"error": f"NewsAPI returned status {r.status_code}"}
+        except Exception as e:
+            return {"symbol": symbol, "error": str(e)}
+
+    if not headlines:
+        return {"symbol": symbol, "count": 0, "error": "No news found."}
+        
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(url)
-            if r.status_code != 200:
-                return {"error": f"NewsAPI returned status {r.status_code}"}
-            data = r.json()
-            articles = data.get("articles", [])
-            if not articles:
-                return {"symbol": symbol, "count": 0, "error": "No news found."}
-            headlines = [a["title"] for a in articles if a.get("title")]
-            sentiments = [TextBlob(h).sentiment.polarity for h in headlines]
-            avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
-            # Find most positive/negative headline
-            # for i,h in enumerate(headlines):
-            #     print(h)
-            #     print(sentiments[i])
-            #     print()
-            if sentiments:
-                max_idx = sentiments.index(max(sentiments))
-                min_idx = sentiments.index(min(sentiments))
-                most_positive = headlines[max_idx]
-                most_negative = headlines[min_idx]
-            else:
-                most_positive = most_negative = None
-            # Classify
-            if avg_sentiment > 0.1:
-                summary = "positive"
-            elif avg_sentiment < -0.1:
-                summary = "negative"
-            else:
-                summary = "neutral"
-            return {
-                "symbol": symbol,
-                "count": len(headlines),
-                "average_sentiment": avg_sentiment,
-                "summary": summary,
-                "most_positive": most_positive,
-                "most_negative": most_negative
-            }
+        sentiments = [TextBlob(h).sentiment.polarity for h in headlines]
+        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
+        if sentiments:
+            max_idx = sentiments.index(max(sentiments))
+            min_idx = sentiments.index(min(sentiments))
+            most_positive = headlines[max_idx]
+            most_negative = headlines[min_idx]
+        else:
+            most_positive = most_negative = None
+        # Classify
+        if avg_sentiment > 0.1:
+            summary = "positive"
+        elif avg_sentiment < -0.1:
+            summary = "negative"
+        else:
+            summary = "neutral"
+        return {
+            "symbol": symbol,
+            "count": len(headlines),
+            "average_sentiment": avg_sentiment,
+            "summary": summary,
+            "most_positive": most_positive,
+            "most_negative": most_negative
+        }
     except Exception as e:
         return {"symbol": symbol, "error": str(e)}
 
@@ -118,7 +128,25 @@ async def search_symbols(q: str = Query(..., min_length=1)):
     Returns list of matches with symbol and description.
     """
     if not FINNHUB_API_KEY:
-        return {"error": "FINNHUB_API_KEY not set. Get one at https://finnhub.io and set FINNHUB_API_KEY env var."}
+        # Return mock results if API key is not set to allow offline/local testing
+        query_lower = q.lower()
+        results = []
+        for sym, name in CURATED.items():
+            if query_lower in sym.lower() or query_lower in name.lower():
+                results.append({
+                    "symbol": sym,
+                    "description": name,
+                    "type": "Common Stock",
+                    "currency": "USD"
+                })
+        if not results:
+            results.append({
+                "symbol": q.upper(),
+                "description": f"{q.upper()} Corp (Mock Index)",
+                "type": "Common Stock",
+                "currency": "USD"
+            })
+        return {"count": len(results), "results": results}
 
     url = "https://finnhub.io/api/v1/search"
     params = {"q": q, "token": FINNHUB_API_KEY}

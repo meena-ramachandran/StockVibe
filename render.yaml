@@ -1,0 +1,23 @@
+services:
+  # FastAPI Python Backend
+  - type: web
+    name: stockvibe-backend
+    env: docker
+    plan: free
+    dockerfilePath: backend/Dockerfile
+    envVars:
+      - key: NEWSAPI_KEY
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+
+  # Static HTML Frontend
+  - type: web
+    name: stockvibe-frontend
+    env: static
+    plan: free
+    publishPath: frontend
+    routes:
+      - type: rewrite
+        path: /*
+        destination: /index.html
