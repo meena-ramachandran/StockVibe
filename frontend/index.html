@@ -38,7 +38,7 @@
 
   <script>
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const API_BASE = isLocal ? "http://127.0.0.1:8000" : "https://stockvibe-backend.onrender.com";
+    const API_BASE = isLocal ? "http://127.0.0.1:8000" : "https://stockvibe-ckvt.onrender.com";
     let ws;
     let currentSymbol = null;
     let chart;
@@ -157,7 +157,7 @@
         statusEl.style.borderColor = "#fcd34d";
       }
 
-      const wsUrl = isLocal ? "ws://127.0.0.1:8000/ws" : "wss://stockvibe-backend.onrender.com/ws";
+      const wsUrl = isLocal ? "ws://127.0.0.1:8000/ws" : "wss://stockvibe-ckvt.onrender.com/ws";
       ws = new WebSocket(wsUrl);
       ws.onopen = () => {
         if (statusEl) {
